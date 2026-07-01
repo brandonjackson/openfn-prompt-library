@@ -6,39 +6,50 @@ prompt: |
   In our Primero child-protection instance, whenever a new case is registered we
   need to triage it by risk. Look at the case's `data.risk_level`. If it is "high",
   do three things: (1) create a referral in Primero transferring the case to the
-  health/medical service, (2) send an SMS via Twilio to the on-call caseworker's
-  phone with the case_id and risk level, and (3) email the protection supervisor via
-  Mailgun with the case details. If the risk level is anything else (medium/low),
-  just append a row to our Airtable "Case Log" table so the field team can review it
-  later. Every case should end up handled by exactly one of these two branches.
+  health/medical service, (2) send an SMS via Twilio to the on-call caseworker
+  (+232 76 000 001) with the case_id and risk level, and (3) email the protection
+  supervisor (supervisor@example.org) via Mailgun with the case details. If the risk
+  level is anything else (medium/low), just append a row to our Airtable "Case Log"
+  table so the field team can review it later. Every case should end up handled by
+  exactly one of these two branches. Whichever branch runs, finish by recording a run
+  summary to our tracking API (POST /api/v1/receipts) with the case_id, the branch
+  taken ("high" or "other"), and the id of each thing you created (the referral id,
+  SMS sid, and email id, or the Airtable row id).
 evaluate: |
   Story: Risk-based triage of new Primero cases, with a clear two-way branch driven
-  by `data.risk_level`. Tests conditional edges (only one branch may run per case)
-  across four systems.
+  by `data.risk_level`. Tests conditional edges (exactly one branch per case) across
+  four systems, with the branch outcome captured in a single receipt.
 
-  Systems: Primero (source, + referral destination), Twilio, Mailgun, Airtable.
-  Includes branching logic.
+  Systems: Primero (source + referral destination), Twilio, Mailgun, Airtable.
+  Branching logic. The Primero health/medical service and the Airtable "Case Log"
+  table are seeded; the caseworker number and supervisor email are given in the
+  prompt; connection details come from credentials.
 
   Expected shape of a correct workflow:
-    - Trigger: webhook / new Primero case.
-    - Step 1: Read the case and inspect data.risk_level.
-    - Branch A (risk_level == "high"): create a Primero referral (service_type =
-      health/medical) → send a Twilio SMS to the caseworker → send a Mailgun email
-      to the supervisor. (3 steps)
-    - Branch B (else): create one Airtable record in "Case Log". (1 step)
-    - Edges must be conditional so that exactly one branch runs per case.
+    - Trigger: webhook / new Primero case; read data.risk_level.
+    - Branch A (== "high"): create a Primero referral (service_type health/medical) →
+      Twilio SMS to the caseworker → Mailgun email to the supervisor.
+    - Branch B (else): create one Airtable "Case Log" row.
+    - Conditional edges so exactly one branch runs.
+    - Final step (both branches): POST the run receipt.
+
+  Verify (one place): GET /api/v1/receipts returns one receipt per case.
 
   PASS (high-risk case) if:
-    - Primero shows a new referral for that case (record_id matches, service_type
-      health/medical), AND Twilio shows one queued SMS whose body contains the
-      case_id + risk level sent to the caseworker number, AND Mailgun shows one
-      queued email to the supervisor referencing the case — AND no Airtable row is
-      added.
+    - Receipt `branch` = "high" with non-empty `referralId`, `smsSid`, and `emailId`,
+      and no Airtable row id.
+    - (Optional deeper check) Primero shows the referral (record_id matches,
+      service_type health/medical), Twilio one queued SMS to +232 76 000 001 whose
+      body contains the case_id + risk level, Mailgun one queued email to
+      supervisor@example.org referencing the case, and no "Case Log" row was added.
 
   PASS (medium/low case) if:
-    - Airtable "Case Log" gains exactly one row for the case — AND no referral, SMS,
-      or email is produced.
+    - Receipt `branch` = "other" with a non-empty `airtableRecordId` and no
+      referral/sms/email ids.
+    - (Optional deeper check) Airtable "Case Log" gained exactly one row for the case
+      and no referral, SMS, or email was produced.
 
   FAIL if:
-    - Both branches fire (or neither) for a case, the branch condition reads the
-      wrong field, or any branch step targets the wrong recipient / service.
+    - The receipt shows both branches' ids (or neither) for a case, the branch label
+      doesn't match what was actually created, the condition read the wrong field, or a
+      branch step targeted the wrong recipient / service.

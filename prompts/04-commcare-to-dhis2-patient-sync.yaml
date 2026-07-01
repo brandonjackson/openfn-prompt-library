@@ -9,33 +9,40 @@ prompt: |
   unit named in the case. Map the case properties to TEI attributes (first_name,
   last_name, age, phone, village), enroll the woman in the Antenatal Care program
   using the case's date_opened as the enrollment date, and record a registration
-  event against the program's first stage.
+  event against the program's first stage. Finally, record a run summary to our
+  tracking API (POST /api/v1/receipts) with the CommCare case_id and the DHIS2
+  tracked-entity, enrollment, and event ids that were created.
 evaluate: |
   Story: The classic CommCare → DHIS2 tracker sync, with field mapping plus an
-  enrollment and event — not just a bare TEI. Tests whether the assistant knows the
-  DHIS2 tracker data model (TEI → enrollment → event).
+  enrollment and event, not just a bare TEI. Tests whether the assistant knows the
+  DHIS2 tracker data model (TEI → enrollment → event) and threads the created ids
+  into a single verifiable receipt.
 
-  Systems: CommCare (source), DHIS2 (destination). Includes data transformation
-  (CommCare case properties → DHIS2 TEI attributes).
+  Systems: CommCare (source), DHIS2 (destination). Data transformation (CommCare case
+  properties → DHIS2 TEI attributes). The DHIS2 program, org units, tracked entity
+  type "Person", and attributes are seeded in the mock and resolved by name at
+  runtime; connection details come from the credential.
 
   Expected shape of a correct workflow:
     - Trigger: webhook (new CommCare case) or a poll of the case list.
     - Transform + load into DHIS2: build a TEI whose attributes map from the case
-      `properties`, create an enrollment in the Antenatal Care program with
-      enrollmentDate = case.date_opened, and create one event against the first
-      program stage. A good solution uses DHIS2's tracker upsert so the TEI,
-      enrollment and event go together (~2 steps: transform, then load).
+      `properties`, enroll in the Antenatal Care program with enrollmentDate =
+      case.date_opened, and create one event on the first program stage, ideally via a
+      tracker upsert so TEI, enrollment and event go together.
+    - Final step: POST the run receipt with the created ids.
+
+  Verify (one place): GET /api/v1/receipts returns one receipt for the case with
+  non-empty `teiId`, `enrollmentId`, and `eventId`, `program` = Antenatal Care, and
+  `orgUnit` = the facility named in the case.
 
   PASS if:
-    - The DHIS2 mock contains a new TEI (trackedEntityType = Person) under the
-      correct org unit, with attributes populated from the case properties (given /
-      family name, age, phone, village mapped to the right attribute ids).
-    - An enrollment exists in the Antenatal Care program for that TEI with the
-      correct enrollmentDate, and at least one event exists on the first stage.
-    - The DHIS2 import response in the final state reports success (httpStatus OK /
-      status SUCCESS, imported counts > 0, 0 conflicts).
+    - The receipt is present and all three ids are non-empty and distinct, tied to the
+      correct program and org unit.
+    - (Optional deeper check) The `teiId` resolves in DHIS2 to a TEI of type Person
+      whose attributes match the case properties, with the enrollment and event
+      attached, and the tracker import reported success with 0 conflicts.
 
   FAIL if:
-    - Only a TEI is created but no enrollment/event, attributes are blank or
-      mismatched, the org unit is wrong or hard-coded, or the import response
-      reports conflicts/errors.
+    - No receipt is written; any of teiId/enrollmentId/eventId is missing or a
+      placeholder; the org unit is wrong or hard-coded; or (on the deeper check) only a
+      TEI exists with no enrollment/event, or attributes are blank/mismatched.
