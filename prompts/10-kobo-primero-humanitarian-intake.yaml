@@ -1,0 +1,68 @@
+name: Humanitarian Protection Intake — full orchestration (7 systems, GBV branch)
+difficulty: hard
+n_steps: 8
+n_systems: 7
+prompt: |
+  We're rolling out a protection intake process for a humanitarian response and need
+  one end-to-end workflow that ties everything together.
+
+  Intake happens in Kobotoolbox: field teams submit a "Protection Intake" survey
+  (asset). For each new submission, do the following standard registration for every
+  case, regardless of type:
+    - Create or update a case in Primero from the submission (name, age, sex,
+      protection concerns, registration date, owned_by = the submitting field
+      worker).
+    - Cross-register the individual in DHIS2 as a tracked entity instance under the
+      site's org unit so they show up in aggregate protection statistics.
+    - Store a copy of the intake in our Airtable "Intake Register" for the field
+      coordinator.
+    - Push a de-identified summary (no name, no exact location — just age band, sex,
+      concern type, and site code) to our partner's reporting API over plain HTTP.
+
+  Then branch on protection concern: if the submission is flagged as a
+  gender-based-violence (GBV) case (concern includes "gbv" or "sexual_violence"),
+  escalate — create an incident in Primero linked to the case, create a referral to
+  the GBV response service, send an URGENT SMS via Twilio to the GBV focal point,
+  and email the protection coordinator via Mailgun with the case_id and site. If it
+  is not a GBV case, the standard registration above is all that's needed — no
+  incident, referral, SMS, or coordinator email.
+
+  Everything should key off the same person, so the Primero case_id, DHIS2 TEI id,
+  and Airtable record are cross-referenced.
+evaluate: |
+  Story: The most complex scenario — a 7-system orchestration with a shared
+  "standard registration" path that runs for every case, plus a conditional GBV
+  escalation branch, plus a data-minimization transform for the partner API. Tests
+  everything at once: multi-system fan-out, branching, transformation, PII handling,
+  and cross-referencing.
+
+  Systems: Kobotoolbox (source), Primero, DHIS2, Airtable, Generic HTTP (partner
+  API), Twilio, Mailgun (seven total). Data transformation + branching logic.
+
+  Expected shape of a correct workflow:
+    - Trigger: cron poll / webhook of new Kobo "Protection Intake" submissions.
+    - Standard path (ALL cases): Primero case upsert → DHIS2 TEI registration →
+      Airtable "Intake Register" row → HTTP POST of a DE-IDENTIFIED summary to the
+      partner API.
+    - GBV branch (concern includes gbv / sexual_violence): Primero incident (linked
+      to the case) → Primero referral to the GBV service → urgent Twilio SMS to the
+      focal point → Mailgun email to the coordinator.
+    - Non-GBV: none of the four escalation steps run.
+
+  PASS if:
+    - For every submission: Primero has the case, DHIS2 has the TEI (right org unit),
+      Airtable "Intake Register" has the row, and the Generic HTTP partner mock
+      (GET /_admin/requests, or the target collection) shows a posted record
+      containing ONLY de-identified fields (age band, sex, concern type, site code)
+      — no name and no precise location.
+    - The Primero case_id, DHIS2 TEI id, and Airtable row cross-reference the same
+      person.
+    - For a GBV submission ONLY: a Primero incident + a referral to the GBV service
+      exist for that case, Twilio shows one urgent queued SMS to the focal point, and
+      Mailgun shows one queued email to the coordinator with the case_id + site.
+    - For a non-GBV submission: no incident, referral, SMS, or coordinator email.
+
+  FAIL if:
+    - The partner HTTP payload leaks PII (name / exact location), the GBV branch
+      fires for non-GBV cases (or is skipped for GBV cases), the cross-reference ids
+      don't line up, or any standard-path system is missing its record.

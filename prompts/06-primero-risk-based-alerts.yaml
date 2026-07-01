@@ -1,0 +1,44 @@
+name: Primero High-Risk Case → Referral + Alerts (branching)
+difficulty: moderate
+n_steps: 5
+n_systems: 4
+prompt: |
+  In our Primero child-protection instance, whenever a new case is registered we
+  need to triage it by risk. Look at the case's `data.risk_level`. If it is "high",
+  do three things: (1) create a referral in Primero transferring the case to the
+  health/medical service, (2) send an SMS via Twilio to the on-call caseworker's
+  phone with the case_id and risk level, and (3) email the protection supervisor via
+  Mailgun with the case details. If the risk level is anything else (medium/low),
+  just append a row to our Airtable "Case Log" table so the field team can review it
+  later. Every case should end up handled by exactly one of these two branches.
+evaluate: |
+  Story: Risk-based triage of new Primero cases, with a clear two-way branch driven
+  by `data.risk_level`. Tests conditional edges (only one branch may run per case)
+  across four systems.
+
+  Systems: Primero (source, + referral destination), Twilio, Mailgun, Airtable.
+  Includes branching logic.
+
+  Expected shape of a correct workflow:
+    - Trigger: webhook / new Primero case.
+    - Step 1: Read the case and inspect data.risk_level.
+    - Branch A (risk_level == "high"): create a Primero referral (service_type =
+      health/medical) → send a Twilio SMS to the caseworker → send a Mailgun email
+      to the supervisor. (3 steps)
+    - Branch B (else): create one Airtable record in "Case Log". (1 step)
+    - Edges must be conditional so that exactly one branch runs per case.
+
+  PASS (high-risk case) if:
+    - Primero shows a new referral for that case (record_id matches, service_type
+      health/medical), AND Twilio shows one queued SMS whose body contains the
+      case_id + risk level sent to the caseworker number, AND Mailgun shows one
+      queued email to the supervisor referencing the case — AND no Airtable row is
+      added.
+
+  PASS (medium/low case) if:
+    - Airtable "Case Log" gains exactly one row for the case — AND no referral, SMS,
+      or email is produced.
+
+  FAIL if:
+    - Both branches fire (or neither) for a case, the branch condition reads the
+      wrong field, or any branch step targets the wrong recipient / service.

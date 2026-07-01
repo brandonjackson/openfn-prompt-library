@@ -1,0 +1,33 @@
+name: CommCare Form Submissions → Data Warehouse (HTTP)
+difficulty: easy
+n_steps: 2
+n_systems: 2
+prompt: |
+  Forward every new CommCare form submission to our data warehouse at its /ingest
+  endpoint so we keep a raw copy of everything the field teams submit.
+evaluate: |
+  Story: The team wants a durable raw copy of every CommCare form submission in a
+  generic REST data warehouse (backed by the Generic HTTP mock). A simple
+  source → sink passthrough with essentially no transformation.
+
+  Systems: CommCare (source), Generic HTTP (destination).
+
+  Expected shape of a correct workflow:
+    - Trigger: webhook (CommCare forwards submissions) or a cron poll of
+      GET /a/{domain}/api/v0.5/form/.
+    - Step 1: Obtain the form submission payload (from the webhook body, or by
+      listing new submissions).
+    - Step 2: POST the submission to the warehouse: POST /api/v1/ingest with the
+      form JSON as the body (the Generic HTTP mock stores it under the "ingest"
+      collection and returns an auto id).
+
+  PASS if:
+    - For each submission processed, GET /api/v1/ingest on the Generic HTTP mock
+      lists a stored record whose body matches the CommCare form payload, and the
+      `_mock` echo confirms method=POST and path=/api/v1/ingest.
+    - The run's final state contains the warehouse response id(s).
+
+  FAIL if:
+    - Nothing is posted, only part of the payload is forwarded, the wrong HTTP
+      method/path is used, or already-forwarded submissions are re-sent on every
+      run.
