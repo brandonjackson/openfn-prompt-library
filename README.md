@@ -28,6 +28,29 @@ tweaks — and compare results apples-to-apples.
 
 ---
 
+## What the assistant sees (and what it doesn't)
+
+The whole test rests on the assistant getting **only OpenFn's docs plus the one
+`prompt` field**. It does not see `system-catalog.md`, the mocks, or any id list. To
+keep that honest while still producing a workflow that actually runs, context is
+split three ways, exactly as in a real OpenFn project:
+
+1. **Connection facts** (base URLs, tokens, the Airtable base id, the Twilio
+   from-number, the Mailgun domain) live in **OpenFn credentials**, set up by the
+   tester. A workflow reads them via `state.configuration`; they never appear in a
+   prompt, and their absence is realistic rather than a gap.
+2. **Named targets** (a DHIS2 program, an org unit, a Kobo asset, an Airtable table)
+   are **seeded into the mocks**. The prompt names them in plain language and a
+   correct workflow resolves the name to an id at runtime.
+3. **Genuine business specifics** (who to alert, a non-obvious code mapping) are
+   stated **in the prompt**, because a real user would state them.
+
+The payoff is that prompts stay short and representative instead of becoming
+instance-id dumps. See `system-catalog.md` for the per-system seeded fixtures and
+credential fields.
+
+---
+
 ## The system catalog
 
 Every prompt targets 2–10 of these ten mock services. Full details, data shapes,
@@ -77,11 +100,14 @@ Each file in `prompts/` is a YAML document with exactly these fields:
 | `n_steps` | integer | Expected number of job steps in a correct workflow (excluding the trigger). |
 | `n_systems` | integer | Number of distinct external systems the workflow connects to. |
 | `prompt` | string (block scalar) | The exact natural-language prompt to paste into the OpenFn AI assistant. This is the **only** thing the assistant sees. |
-| `evaluate` | string (block scalar) | The tester's rubric: the story, the expected workflow shape, and concrete PASS / FAIL criteria phrased against observable mock output. |
+| `evaluate` | string (block scalar) | The tester's rubric: the story, the expected workflow shape, and concrete PASS / FAIL criteria. For prompts 04 through 10 these are scored against a single **run receipt** the workflow posts (see below); the terse prompts (01–03) are scored on their one observable outcome. |
 
 `n_steps` and `n_systems` are *expectations*, not hard requirements — a solution
 that solves the story correctly with a different step count can still pass. They're
-there to flag when the assistant wildly over- or under-builds.
+there to flag when the assistant wildly over- or under-builds. The final run-receipt
+step and the Generic HTTP receipt sink are a fixed harness convention and are **not**
+counted in `n_steps` / `n_systems`, which describe the business shape of the
+integration.
 
 ### Example
 
@@ -141,20 +167,30 @@ This is the repeatable loop. Run it per prompt (or batch across all ten).
 1. **Stand up the mocks.** Bring up the mock servers for the systems the prompt
    uses (see `system-catalog.md` for each system's endpoints and data shapes).
    Seed any data the story assumes (e.g. existing Airtable rows, a Kobo asset with
-   submissions, OpenMRS encounters in the last 24h).
-2. **Configure OpenFn.** Point the relevant adaptors/credentials at the mock base
-   URLs so a generated workflow actually hits the mocks.
+   submissions, OpenMRS encounters in the last 24h) **and the named targets the
+   prompt references** (programs, org units, assets, tables) so they resolve by name
+   at runtime. The fixtures appendix in `system-catalog.md` lists these per system.
+2. **Configure OpenFn credentials.** Point each adaptor's credential at the mock base
+   URLs and set the connection facts the prompt intentionally omits (tokens, the
+   Airtable base id, the Twilio from-number, the Mailgun domain). These are what the
+   assistant assumes exist; a generated workflow reaches them via `state.configuration`.
 3. **One-shot the prompt.** Copy the `prompt` field verbatim into the OpenFn AI
    assistant and let it generate the workflow. **Do not** coach it or iterate — the
    whole point is to measure one-shot quality. Save the generated workflow.
 4. **Run it.** Execute the generated workflow against the mocks with a
    representative input (for branching prompts, run once per branch — e.g. a
    high-risk *and* a low-risk case).
-5. **Score with `evaluate`.** Work through the PASS / FAIL criteria by inspecting:
+5. **Score with `evaluate`.** For prompts 04 through 10, read the single **run
+   receipt** first: `GET /api/v1/receipts` on the Generic HTTP mock returns the ids the
+   workflow created and the branch it took, which settles most PASS / FAIL criteria in
+   one place. When a criterion calls for it (or you want to confirm the receipt isn't
+   fabricated), spot-check the referenced side effects:
    - the workflow's **final run state** (returned ids, import summaries), and
    - the **mock side effects** — records created, messages queued, request logs
      (e.g. Twilio `Messages.json`, Mailgun events, DHIS2 import summary, the Generic
      HTTP `GET /_admin/requests` log, Airtable rows).
+
+   The terse prompts (01–03) write no receipt; score them on their single outcome.
 6. **Record the result.** Note PASS/FAIL plus useful observations: did the step
    count match `n_steps`? Did it pick the right adaptors and trigger type? Where did
    it break down? Keeping these notes over time is how you compare assistant
@@ -185,7 +221,11 @@ so the set stays balanced and every prompt is scorable.
 4. **Write the `evaluate` block against observable mock output.** State the story,
    the expected workflow shape, then concrete PASS / FAIL bullets that a tester can
    check by looking at created records, queued messages, and request logs — not
-   vibes. For branching prompts, give the expected outcome for *each* branch.
+   vibes. For branching prompts, give the expected outcome for *each* branch. If the
+   workflow touches more than one or two systems, have it post a run receipt to
+   `/api/v1/receipts` carrying the ids it creates and the branch it takes, and score
+   against that receipt so verification stays one-place. Keep the receipt small and
+   made of runtime-produced ids, never ids you hard-code into the prompt.
 5. **Set the metadata.** `difficulty` per the rubric above, `n_steps` = expected
    job steps, `n_systems` = distinct systems.
 6. **Name and number the file** `NN-short-slug.yaml` in `prompts/`, keeping the

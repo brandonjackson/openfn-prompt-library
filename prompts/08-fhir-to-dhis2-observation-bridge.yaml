@@ -6,41 +6,50 @@ prompt: |
   A partner Health Information Exchange sends us FHIR R4 Bundles of vital-sign
   Observations by POSTing them to our webhook. For each Observation in the bundle,
   we want to record it in DHIS2 as an event. Use a mapping table from LOINC code to
-  DHIS2 data element (e.g. 29463-7 body weight → the "Weight (kg)" data element,
-  8310-5 body temperature → "Temperature", 8867-4 heart rate → "Heart rate"). For
-  each mapped Observation, create a DHIS2 event under the patient's facility org unit
+  DHIS2 data element (29463-7 body weight → the "Weight (kg)" data element, 8310-5
+  body temperature → "Temperature", 8867-4 heart rate → "Heart rate"). For each
+  mapped Observation, create a DHIS2 event under the patient's facility org unit
   against the vitals program stage, carrying the numeric value. Observations whose
   LOINC code is NOT in the mapping table must be skipped (do not guess a data
   element) and collected; at the end, if there were any unmapped codes, email the
-  data team via Mailgun a list of the unmapped LOINC codes so they can extend the
-  mapping.
+  data team (data-team@example.org) via Mailgun a list of the unmapped LOINC codes so
+  they can extend the mapping. Finally, record a run summary to our tracking API
+  (POST /api/v1/receipts) with how many Observations were mapped, the list of unmapped
+  LOINC codes, and the id of the exception email if one was sent.
 evaluate: |
-  Story: A FHIR → DHIS2 transformation with a mapped/unmapped branch and an
-  exception report. Tests code-system mapping (LOINC → DHIS2 data element),
-  defensive handling of unknown codes, and a conditional notification.
+  Story: A FHIR → DHIS2 transformation with a mapped/unmapped split and a conditional
+  exception report, all summarized in one receipt. Tests code-system mapping (LOINC →
+  DHIS2 data element), defensive handling of unknown codes, and a conditional email.
 
   Systems: FHIR (source, via webhook), DHIS2 (destination), Mailgun (exception
-  report). Data transformation + branching logic.
+  report). Data transformation + branching. The vitals program stage and the three
+  named data elements are seeded and resolved by name; the LOINC→element mapping is
+  given in the prompt; the data-team address is given; connections via credentials.
 
   Expected shape of a correct workflow:
     - Trigger: webhook receiving a FHIR Bundle.
-    - Step 1: Parse the Bundle entries into individual Observations.
+    - Step 1: Parse the Bundle into individual Observations.
     - Step 2: Split each by whether its LOINC code is in the mapping table.
     - Step 3 (mapped): create a DHIS2 event per mapped Observation (correct data
       element, org unit, program stage, numeric value).
-    - Step 4 (unmapped, conditional): if any unmapped codes were collected, send a
-      Mailgun email listing them; if none, send nothing.
+    - Step 4 (unmapped, conditional): if any unmapped codes, email the data team a
+      list; else send nothing.
+    - Final step: POST the run receipt (mapped count, unmapped codes, email id?).
+
+  Verify (one place): GET /api/v1/receipts returns one receipt with a `mapped` count,
+  an `unmappedCodes` array, and an `exceptionEmailId` (present iff unmappedCodes is
+  non-empty).
 
   PASS if:
-    - DHIS2 has one new event per MAPPED Observation, each with the value written to
-      the data element its LOINC code maps to, under the right org unit / stage; the
-      DHIS2 import summary shows imported == number of mapped Observations, 0
-      conflicts.
-    - No event is created for unmapped codes.
-    - If (and only if) the bundle contained unmapped codes, Mailgun shows one queued
-      email to the data team whose body lists exactly those LOINC codes.
+    - `mapped` equals the number of Observations whose LOINC is in the table;
+      `unmappedCodes` lists exactly the codes not in the table; `exceptionEmailId` is
+      present if and only if `unmappedCodes` is non-empty.
+    - (Optional deeper check) DHIS2 has one event per mapped Observation with the value
+      on the correct data element / org unit / stage (import 0 conflicts), no event for
+      unmapped codes, and the Mailgun email (if any) to data-team@example.org lists
+      exactly those codes.
 
   FAIL if:
-    - Unmapped codes are force-mapped or dropped silently (no report), mapped values
-      land on the wrong data element, event counts don't match, or an email is sent
-      when there were no unmapped codes.
+    - Unmapped codes are force-mapped or dropped without report; mapped values land on
+      the wrong data element; the receipt's counts/codes don't match reality; or an
+      email is sent when there were no unmapped codes (or skipped when there were).

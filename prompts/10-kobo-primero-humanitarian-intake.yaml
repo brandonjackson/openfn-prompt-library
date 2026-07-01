@@ -22,47 +22,64 @@ prompt: |
   Then branch on protection concern: if the submission is flagged as a
   gender-based-violence (GBV) case (concern includes "gbv" or "sexual_violence"),
   escalate — create an incident in Primero linked to the case, create a referral to
-  the GBV response service, send an URGENT SMS via Twilio to the GBV focal point,
-  and email the protection coordinator via Mailgun with the case_id and site. If it
-  is not a GBV case, the standard registration above is all that's needed — no
-  incident, referral, SMS, or coordinator email.
+  the GBV response service, send an URGENT SMS via Twilio to the GBV focal point
+  (+232 76 000 002), and email the protection coordinator (coordinator@example.org)
+  via Mailgun with the case_id and site. If it is not a GBV case, the standard
+  registration above is all that's needed — no incident, referral, SMS, or
+  coordinator email.
 
   Everything should key off the same person, so the Primero case_id, DHIS2 TEI id,
-  and Airtable record are cross-referenced.
+  and Airtable record are cross-referenced. Finish by recording a run summary to our
+  tracking API (POST /api/v1/receipts) with the branch taken ("gbv" or "standard"),
+  the Primero case_id, DHIS2 TEI id, and Airtable row id from the standard path, and,
+  for GBV cases, the incident id, referral id, SMS sid, and coordinator email id.
 evaluate: |
-  Story: The most complex scenario — a 7-system orchestration with a shared
-  "standard registration" path that runs for every case, plus a conditional GBV
-  escalation branch, plus a data-minimization transform for the partner API. Tests
-  everything at once: multi-system fan-out, branching, transformation, PII handling,
-  and cross-referencing.
+  Story: The most complex scenario, a 7-system orchestration with a shared standard
+  registration that runs for every case, a conditional GBV escalation branch, and a
+  data-minimization transform for the partner API. Tests everything at once: fan-out,
+  branching, transformation, PII handling, and cross-referencing, all summarized in
+  one receipt.
 
-  Systems: Kobotoolbox (source), Primero, DHIS2, Airtable, Generic HTTP (partner
-  API), Twilio, Mailgun (seven total). Data transformation + branching logic.
+  Systems: Kobotoolbox (source), Primero, DHIS2, Airtable, Generic HTTP (partner API),
+  Twilio, Mailgun (seven). Transformation + branching. The Kobo "Protection Intake"
+  asset, the Primero "GBV response service", DHIS2 site org units, and the Airtable
+  "Intake Register" are seeded; the focal-point number and coordinator email are
+  given; connections via credentials.
 
   Expected shape of a correct workflow:
     - Trigger: cron poll / webhook of new Kobo "Protection Intake" submissions.
-    - Standard path (ALL cases): Primero case upsert → DHIS2 TEI registration →
-      Airtable "Intake Register" row → HTTP POST of a DE-IDENTIFIED summary to the
-      partner API.
-    - GBV branch (concern includes gbv / sexual_violence): Primero incident (linked
-      to the case) → Primero referral to the GBV service → urgent Twilio SMS to the
-      focal point → Mailgun email to the coordinator.
-    - Non-GBV: none of the four escalation steps run.
+    - Standard path (ALL cases): Primero case upsert → DHIS2 TEI → Airtable "Intake
+      Register" row → HTTP POST of a DE-IDENTIFIED summary to the partner API.
+    - GBV branch (concern includes gbv / sexual_violence): Primero incident (linked to
+      the case) → Primero referral to the GBV service → urgent Twilio SMS to the focal
+      point → Mailgun email to the coordinator.
+    - Non-GBV: none of the four escalation steps.
+    - Final step: POST the run receipt.
 
-  PASS if:
-    - For every submission: Primero has the case, DHIS2 has the TEI (right org unit),
-      Airtable "Intake Register" has the row, and the Generic HTTP partner mock
-      (GET /_admin/requests, or the target collection) shows a posted record
-      containing ONLY de-identified fields (age band, sex, concern type, site code)
-      — no name and no precise location.
-    - The Primero case_id, DHIS2 TEI id, and Airtable row cross-reference the same
-      person.
-    - For a GBV submission ONLY: a Primero incident + a referral to the GBV service
-      exist for that case, Twilio shows one urgent queued SMS to the focal point, and
-      Mailgun shows one queued email to the coordinator with the case_id + site.
-    - For a non-GBV submission: no incident, referral, SMS, or coordinator email.
+  Verify (one place): GET /api/v1/receipts returns one receipt per submission with
+  `branch` ("gbv" | "standard") and the standard-path ids `primeroCaseId`, `teiId`,
+  and `airtableRecordId`; GBV receipts additionally carry `incidentId`, `referralId`,
+  `smsSid`, and `coordinatorEmailId`.
+
+  PASS (every submission) if:
+    - The three standard-path ids are present and cross-reference the same person, and
+      the partner API received a record with ONLY de-identified fields (age band, sex,
+      concern type, site code), no name and no precise location. (Check the partner
+      payload once via GET /_admin/requests or the target collection; the receipt does
+      not certify de-identification by itself.)
+
+  PASS (GBV submission) if:
+    - `branch` = "gbv" and `incidentId`, `referralId`, `smsSid`, and
+      `coordinatorEmailId` are all present; deeper check: Primero has the incident + a
+      referral to the GBV service, Twilio one urgent SMS to +232 76 000 002, Mailgun
+      one email to coordinator@example.org with case_id + site.
+
+  PASS (non-GBV submission) if:
+    - `branch` = "standard" and none of the escalation ids are present; no incident,
+      referral, SMS, or coordinator email exists.
 
   FAIL if:
-    - The partner HTTP payload leaks PII (name / exact location), the GBV branch
-      fires for non-GBV cases (or is skipped for GBV cases), the cross-reference ids
-      don't line up, or any standard-path system is missing its record.
+    - The partner payload leaks PII (name / precise location); the GBV branch fires for
+      non-GBV (or is skipped for GBV); the cross-reference ids don't line up; a
+      standard-path record is missing; or the receipt's branch/ids don't match what was
+      actually created.

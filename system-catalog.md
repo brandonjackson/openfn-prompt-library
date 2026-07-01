@@ -25,6 +25,46 @@ Generic HTTP mock.
 
 ---
 
+## How prompts, credentials, and the mocks fit together
+
+The AI assistant that generates a workflow sees **only OpenFn's docs plus the one
+prompt**. It never sees this catalog. So the prompts read the way a real user writes
+them, and the detail needed to actually run lives where it lives in a real OpenFn
+project:
+
+- **Connection facts live in credentials, not the prompt.** Base URLs, API tokens,
+  the Airtable base id, the Twilio account SID and from-number, the Mailgun domain,
+  the Kobo server: all configured once as OpenFn credentials and injected by the
+  adaptor at runtime. A generated workflow reads them from `state.configuration`; it
+  never hard-codes them and no prompt contains them.
+- **Named targets are seeded into the mocks.** When a prompt names a DHIS2 program
+  ("Antenatal Care"), an org unit, a Kobo asset ("Household Survey Q1"), or an
+  Airtable table ("Master List"), the mock is seeded with that entity so a correct
+  workflow resolves the human name to its id at runtime (for example DHIS2
+  `GET /api/programs?filter=name:like:Antenatal`). The appendix at the bottom lists
+  the seeded handles each prompt relies on.
+- **Only genuine business specifics appear in the prompt**, such as an alert
+  recipient or a non-obvious code mapping, because those are exactly what a real user
+  states.
+
+This split is deliberate: it keeps each prompt short and representative instead of
+turning it into a dump of instance ids.
+
+### Verifying a run: the run receipt
+
+The multi-system and branching prompts (04 through 10) end by writing a single **run
+receipt** to the Generic HTTP mock at `POST /api/v1/receipts`. The receipt carries
+the real ids the workflow just produced (a DHIS2 TEI id, a Twilio message sid, an
+OpenMRS uuid, and so on) plus which branch ran. Scoring is then one read,
+`GET /api/v1/receipts`, instead of a sweep across every mock. Because the receipt has
+to contain ids that exist only if the upstream writes really happened, a workflow
+cannot produce a passing receipt without doing the work; when you want to be certain,
+spot-check one id from the receipt against its system. The terse prompts (01 through
+03) already have a single observable outcome (one SMS, one stored record, one email),
+so they are scored on that directly and do not write a receipt.
+
+---
+
 ## 1. DHIS2
 
 **What it is:** An open-source health information management platform used by
@@ -259,6 +299,9 @@ captures whatever you send and makes it queryable.
 - **Echo mode:** Every response includes a `_mock` field showing what was received
   (method, path, headers, body) for debugging.
 - **Request log:** `GET /_admin/requests` shows the full history.
+- **Run receipts:** by convention, a workflow posts its end-of-run summary to
+  `POST /api/v1/receipts`, and `GET /api/v1/receipts` returns them. This is the single
+  artifact used to score prompts 04 through 10 (see "Verifying a run" above).
 
 Example data structure (auto-wrapped):
 
@@ -493,3 +536,43 @@ record, create records (single or batch), update records (single or batch via
 enforced.
 
 **Authoritative docs:** <https://airtable.com/developers/web/api/introduction>
+
+---
+
+## Appendix: seeded fixtures & credentials (harness reference)
+
+This is the tester's reference, not something the assistant sees. It lists, per
+system, what the OpenFn credential provides and the named handles seeded in the mock
+so the prompts' plain-language references resolve at runtime. Prompt numbers in
+parentheses.
+
+- **DHIS2.** *Credential:* base URL, token. *Seeded:* program "Antenatal Care" (04)
+  and the maternal-health program (09); tracked entity type "Person"; an org-unit
+  hierarchy whose facilities/districts/sites resolve by name (04, 05, 08, 09, 10); a
+  WASH data set plus five water-source data elements named borehole, well, piped,
+  surface_water, and other (05); a vitals program stage with data elements
+  "Weight (kg)", "Temperature", and "Heart rate" (08). Resolve via `/api/programs`,
+  `/api/organisationUnits`, `/api/dataElements`, or `/api/metadata` filtered by name.
+- **CommCare.** *Credential:* base URL, domain, API key. *Seeded:* the `pregnancy`
+  case type (04), an enrollment form (09), and forwardable form submissions (02).
+- **OpenMRS.** *Credential:* base URL, username/password. *Seeded:* an MRN identifier
+  type and person/encounter/obs/concept data in the nightly window (07); patient
+  create (09).
+- **FHIR (HAPI R4).** *Credential:* base URL. *Seeded:* accepts transaction Bundles at
+  `POST /` (07); receives vital-sign Observation bundles by webhook (08).
+- **Generic HTTP.** *Credential:* base URL(s) for the warehouse and the partner API.
+  *Hosts:* `/api/v1/ingest` (02), the partner reporting collection (10), and
+  `/api/v1/receipts` (run receipts for 04 through 10).
+- **Kobotoolbox.** *Credential:* base URL, token. *Seeded assets:* "Household Survey
+  Q1" (05) and "Protection Intake" (10), resolvable via `/api/v2/assets/?q=`.
+- **Primero.** *Credential:* base URL, username/password (bearer token via
+  `/api/v2/tokens`). *Seeded:* the health/medical service (06) and the GBV response
+  service (10); case, incident, and referral endpoints.
+- **Mailgun.** *Credential:* base URL, domain, API key. Recipients are stated in the
+  prompt: supervisor (06), data team (08), program officer (09), coordinator (10).
+- **Twilio.** *Credential:* account SID, auth token, from-number. Recipients are
+  stated in the prompt or taken from the data: on-call caseworker (06), GBV focal
+  point (10), beneficiary phone (01, 09).
+- **Airtable.** *Credential:* base id, personal access token. *Seeded tables:*
+  "Case Log" (06), "Master List" (09), "Intake Register" (10), and the beneficiaries
+  table (01).
