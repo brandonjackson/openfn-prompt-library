@@ -1,0 +1,30 @@
+name: Weekly DHIS2 Registration Summary → Email
+difficulty: easy
+n_steps: 2
+n_systems: 2
+prompt: |
+  Every Friday afternoon, email the program team a short summary of how many new
+  patients were registered in DHIS2 this week.
+evaluate: |
+  Story: Program managers want a weekly Friday email containing this week's new
+  registration count from DHIS2.
+
+  Systems: DHIS2 (source), Mailgun (destination).
+
+  Expected shape of a correct workflow:
+    - Trigger: cron scheduled for Friday afternoon.
+    - Step 1: Query DHIS2 for this week's registrations (e.g. events / enrollments,
+      or a data value set for the current weekly period) and compute a count.
+    - Step 2: Send an email via Mailgun (POST /v3/{domain}/messages) to the program
+      team with a subject and body stating the count and the reporting week.
+
+  PASS if:
+    - The Mailgun mock returns a queued message (an `id` plus "Queued. Thank you."),
+      the email `to` is the program team, and the subject/body contain the computed
+      count for the correct week.
+    - The count in the email matches what the DHIS2 mock actually returns for that
+      period (spot-check the number against the DHIS2 data).
+
+  FAIL if:
+    - No email is sent, the count is hard-coded or omitted, the reporting window is
+      wrong (not "this week"), or the email body doesn't reflect the DHIS2 query.

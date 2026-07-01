@@ -1,0 +1,41 @@
+name: CommCare Pregnancy Registration → DHIS2 Tracker
+difficulty: moderate
+n_steps: 2
+n_systems: 2
+prompt: |
+  Community health workers register pregnant women in CommCare using the
+  `pregnancy` case type. Whenever a new pregnancy case is created, sync it to DHIS2
+  as a tracked entity instance (tracked entity type "Person") under the facility org
+  unit named in the case. Map the case properties to TEI attributes (first_name,
+  last_name, age, phone, village), enroll the woman in the Antenatal Care program
+  using the case's date_opened as the enrollment date, and record a registration
+  event against the program's first stage.
+evaluate: |
+  Story: The classic CommCare → DHIS2 tracker sync, with field mapping plus an
+  enrollment and event — not just a bare TEI. Tests whether the assistant knows the
+  DHIS2 tracker data model (TEI → enrollment → event).
+
+  Systems: CommCare (source), DHIS2 (destination). Includes data transformation
+  (CommCare case properties → DHIS2 TEI attributes).
+
+  Expected shape of a correct workflow:
+    - Trigger: webhook (new CommCare case) or a poll of the case list.
+    - Transform + load into DHIS2: build a TEI whose attributes map from the case
+      `properties`, create an enrollment in the Antenatal Care program with
+      enrollmentDate = case.date_opened, and create one event against the first
+      program stage. A good solution uses DHIS2's tracker upsert so the TEI,
+      enrollment and event go together (~2 steps: transform, then load).
+
+  PASS if:
+    - The DHIS2 mock contains a new TEI (trackedEntityType = Person) under the
+      correct org unit, with attributes populated from the case properties (given /
+      family name, age, phone, village mapped to the right attribute ids).
+    - An enrollment exists in the Antenatal Care program for that TEI with the
+      correct enrollmentDate, and at least one event exists on the first stage.
+    - The DHIS2 import response in the final state reports success (httpStatus OK /
+      status SUCCESS, imported counts > 0, 0 conflicts).
+
+  FAIL if:
+    - Only a TEI is created but no enrollment/event, attributes are blank or
+      mismatched, the org unit is wrong or hard-coded, or the import response
+      reports conflicts/errors.

@@ -1,0 +1,44 @@
+name: OpenMRS Encounters → FHIR HIE (nightly transaction bundle)
+difficulty: hard
+n_steps: 3
+n_systems: 2
+prompt: |
+  Every night we need to push the day's clinical activity from our OpenMRS instance
+  to the national Health Information Exchange, which is a FHIR R4 server. For each
+  patient who had an encounter in OpenMRS in the last 24 hours, build the
+  corresponding FHIR R4 resources: a Patient (mapped from the OpenMRS person —
+  names, gender, birthdate, MRN identifier), an Encounter (mapped from the OpenMRS
+  encounter), and an Observation for each OpenMRS obs (map the concept to a LOINC
+  code where possible, carry the numeric value + unit). Assemble everything into a
+  single FHIR transaction Bundle with internal references wired up (Encounter and
+  Observation reference the Patient) and POST it to the HIE's base endpoint.
+evaluate: |
+  Story: A non-trivial OpenMRS-REST → FHIR-R4 transformation, culminating in one
+  transaction Bundle POST with correct internal references. Tests deep, multi-entity
+  data mapping between two different clinical specs.
+
+  Systems: OpenMRS (source), FHIR (destination). Heavy data transformation.
+
+  Expected shape of a correct workflow:
+    - Trigger: cron (nightly).
+    - Step 1: Query OpenMRS for encounters in the last 24h (with their patients and
+      obs).
+    - Step 2: Transform each into FHIR Patient / Encounter / Observation resources;
+      assemble a Bundle of type "transaction" with cross-resource references
+      (Encounter.subject → Patient, Observation.subject → Patient/Encounter).
+    - Step 3: POST the Bundle to the FHIR server base (POST /).
+
+  PASS if:
+    - The FHIR mock returns a transaction-response Bundle with an entry per submitted
+      resource, each entry.response.status in the 200/201 range.
+    - Querying the FHIR server afterwards (GET /Patient, /Encounter, /Observation)
+      returns resources whose fields match the source OpenMRS data (name, gender,
+      birthDate, MRN identifier; Observation value + unit; correct LOINC coding).
+    - Every Encounter / Observation resolves to its Patient via reference (no
+      dangling references).
+    - The resource counts equal the number of OpenMRS encounters / obs in the window.
+
+  FAIL if:
+    - References are broken or point at nonexistent ids, resources aren't valid FHIR
+      R4, obs values/units are lost, the bundle isn't a transaction, or the window is
+      wrong (not the last 24h).

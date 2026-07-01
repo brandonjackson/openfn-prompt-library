@@ -1,0 +1,41 @@
+name: Kobo WASH Survey → DHIS2 Aggregate Report
+difficulty: moderate
+n_steps: 3
+n_systems: 2
+prompt: |
+  We run a weekly WASH (water, sanitation & hygiene) household survey in
+  Kobotoolbox (asset "Household Survey Q1"). Each Monday I need to roll up the
+  previous week's submissions into an aggregate report for DHIS2. Pull all
+  submissions received in the last 7 days, count households by their `water_source`
+  value (borehole, well, piped, surface_water, other), and post those counts to
+  DHIS2 as a data value set for the reporting facility and the correct weekly period
+  — one data element per water-source category. If there were no submissions in the
+  window, don't post an empty report.
+evaluate: |
+  Story: Poll Kobo, aggregate categorical counts, and push a DHIS2 data value set
+  for the weekly period — with a guard against posting an empty report. Tests
+  aggregation (many submissions → one summary) and a small conditional.
+
+  Systems: Kobotoolbox (source), DHIS2 (destination). Includes data transformation
+  (per-submission rows → aggregate counts → DHIS2 data value set).
+
+  Expected shape of a correct workflow:
+    - Trigger: cron (Mondays).
+    - Step 1: List submissions from the Kobo asset for the last 7 days
+      (GET /api/v2/assets/{uid}/data/).
+    - Step 2: Aggregate — count submissions grouped by `water_source` into the five
+      categories.
+    - Step 3: If count > 0, POST a DHIS2 data value set (dataSet + weekly period +
+      orgUnit) with one dataValue per water-source data element; otherwise stop.
+
+  PASS if:
+    - The DHIS2 mock receives one data value set for the correct weekly period and
+      org unit, whose dataValue totals equal the counts of submissions per
+      `water_source` in the window (reconcile the numbers against the Kobo mock).
+    - The DHIS2 import summary reports imported/updated counts and 0 conflicts.
+    - When the 7-day window has no submissions, NO data value set is posted.
+
+  FAIL if:
+    - Counts don't reconcile with Kobo submissions, categories are miscounted or
+      dropped, the period or org unit is wrong, or an empty report is posted when
+      there were no submissions in the window.

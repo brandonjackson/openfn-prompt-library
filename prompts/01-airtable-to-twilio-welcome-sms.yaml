@@ -1,0 +1,31 @@
+name: Airtable New Beneficiary → Welcome SMS
+difficulty: easy
+n_steps: 2
+n_systems: 2
+prompt: |
+  When a new beneficiary is added to our Airtable, text them a welcome message.
+evaluate: |
+  Story: A program adds beneficiaries to an Airtable base; each new row should
+  trigger a welcome SMS to that person's phone number. (Deliberately terse prompt —
+  the assistant has to infer the two systems, the trigger, and the field mapping.)
+
+  Systems: Airtable (source), Twilio (destination).
+
+  Expected shape of a correct workflow:
+    - Trigger: cron/poll (or webhook) that picks up newly-created Airtable records.
+    - Step 1: Read new record(s) from Airtable (GET /v0/{baseId}/{table}); pull the
+      phone number and name out of each record's `fields` object.
+    - Step 2: Send an SMS via Twilio (POST .../Messages.json) with To = the
+      beneficiary's phone and a welcome Body that references their name.
+
+  PASS if:
+    - The Twilio mock shows one outbound Message per new Airtable record, each with
+      direction "outbound-api", status "queued" (later "sent"/"delivered"),
+      `to` equal to the phone taken from the Airtable `fields`, and a non-empty
+      welcome `body`.
+    - The `sid` returned by Twilio appears in the run's final state.
+
+  FAIL if:
+    - No Twilio message is created, `to` is hard-coded rather than read from
+      Airtable, the body is empty, or the workflow re-texts already-processed
+      records on every run (no notion of "new").
